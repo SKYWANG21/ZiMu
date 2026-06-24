@@ -3,3 +3,7 @@ Include/
 Lib/
 Scripts/
 pyvenv.cfg
+
+*.srt
+*.mp4
+*.wav

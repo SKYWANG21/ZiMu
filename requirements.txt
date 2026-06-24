@@ -1,1 +1,4 @@
 faster-whisper>=1.2.0
+torch>=2.0
+torchaudio
+funasr>=1.1.0

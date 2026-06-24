@@ -7,9 +7,9 @@ import tempfile
 from pathlib import Path
 
 from zimu.ffmpeg import FFmpegService
-from zimu.models import PipelineConfig, PipelineResult, SubtitleSegment
+from zimu.models import PipelineConfig, PipelineResult
 from zimu.srt import SrtWriter
-from zimu.transcribe import TranscriptionService
+from zimu.transcribe import TranscriptionBackendProtocol, create_transcription_service
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ class SubtitlePipeline:
     视频字幕生成流水线。
 
     步骤:
-        1. ffmpeg 从 MP4 提取 WAV
-        2. faster-whisper 转写生成字幕片段
+        1. ffmpeg 从 MP4 提取 16 kHz 单声道 WAV
+        2. 按配置选择 Whisper 或 SenseVoice 转写，生成带时间戳的字幕片段
         3. 写入 SRT 文件
         4. ffmpeg 将 SRT 硬烧录为带字幕 MP4
     """
@@ -28,9 +28,10 @@ class SubtitlePipeline:
     def __init__(
         self,
         ffmpeg: FFmpegService | None = None,
-        transcription: TranscriptionService | None = None,
+        transcription: TranscriptionBackendProtocol | None = None,
     ) -> None:
         self._ffmpeg = ffmpeg or FFmpegService()
+        # 可注入 mock 转写服务，便于测试；默认由 run() 按 config 创建
         self._transcription = transcription
 
     def run(self, config: PipelineConfig) -> PipelineResult:
@@ -38,22 +39,22 @@ class SubtitlePipeline:
         执行完整字幕生成流程。
 
         Args:
-            config: 流水线配置。
+            config: 流水线配置（含 backend、模型路径、设备等）。
 
         Returns:
             包含输出路径与转写信息的 PipelineResult。
 
         Raises:
-            FileNotFoundError: 输入视频不存在。
+            FileNotFoundError: 输入视频或本地模型不存在。
+            ValueError: 输入格式不支持或转写结果异常。
             FFmpegError: ffmpeg 命令失败。
         """
         self._validate_input(config)
         config.output_dir.mkdir(parents=True, exist_ok=True)
 
-        transcription = self._transcription or TranscriptionService(
-            model_path=config.model_path,
-            device=config.device,
-        )
+        # 按 backend 创建 Whisper 或 SenseVoice 转写服务
+        transcription = self._transcription or create_transcription_service(config)
+        logger.info("转写后端: %s", config.backend)
 
         temp_dir: tempfile.TemporaryDirectory[str] | None = None
         wav_path: Path
@@ -105,6 +106,7 @@ class SubtitlePipeline:
     def _log_result(result: PipelineResult) -> None:
         """输出流水线完成摘要。"""
         logger.info("流水线完成:")
+        logger.info("  后端: %s", result.config.backend)
         logger.info("  SRT: %s", result.srt_path)
         logger.info("  视频: %s", result.subtitled_video_path)
         logger.info("  字幕条数: %d", len(result.segments))

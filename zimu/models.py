@@ -6,8 +6,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
 
-# 默认本地 Whisper 模型目录（CTranslate2 转换后的 faster-whisper 模型）
-DEFAULT_MODEL_PATH = Path(r"D:\models\faster-whisper-medium")
+# ---------------------------------------------------------------------------
+# 默认本地模型路径
+# ---------------------------------------------------------------------------
+
+# faster-whisper（CTranslate2 转换后的 Whisper 权重）
+DEFAULT_MODEL_PATH = Path(r"D:\models\faster-whisper-large-v3")
+
+# SenseVoice 主模型（FunASR AutoModel 本地目录，需用户手动下载）
+DEFAULT_SENSEVOICE_MODEL_PATH = Path(r"D:\models\SenseVoiceSmall")
+
+# FSMN-VAD 模型（SenseVoice 分段与时间戳必需，需用户手动下载）
+DEFAULT_SENSEVOICE_VAD_PATH = Path(r"D:\models\speech_fsmn_vad_zh-cn-16k")
+
+# 转写后端类型：whisper 为默认，sensevoice 为可选
+TranscriptionBackend = Literal["whisper", "sensevoice"]
 
 
 @dataclass(frozen=True)
@@ -22,11 +35,24 @@ class SubtitleSegment:
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    """字幕生成流水线的运行配置。"""
+    """
+    字幕生成流水线的运行配置。
+
+    通过 ``backend`` 选择转写引擎：
+    - ``whisper``：使用 ``model_path`` 指定的 faster-whisper 本地模型
+    - ``sensevoice``：使用 ``sensevoice_model_path`` 与 ``sensevoice_vad_path``
+    """
 
     input_video: Path
     output_dir: Path
+    # Whisper 后端专用：本地 faster-whisper 模型目录
     model_path: Path = DEFAULT_MODEL_PATH
+    # 转写后端选择，默认 whisper 以保持向后兼容
+    backend: TranscriptionBackend = "whisper"
+    # SenseVoice 后端专用：主模型与 VAD 本地目录
+    sensevoice_model_path: Path = DEFAULT_SENSEVOICE_MODEL_PATH
+    sensevoice_vad_path: Path = DEFAULT_SENSEVOICE_VAD_PATH
+    # 两种后端共用：None 表示自动检测 / auto
     language: Optional[str] = None
     device: Literal["auto", "cuda", "cpu"] = "auto"
     keep_temp: bool = False

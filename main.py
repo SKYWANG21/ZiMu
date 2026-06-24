@@ -8,7 +8,13 @@ import sys
 from pathlib import Path
 from typing import Literal, Optional
 
-from zimu.models import DEFAULT_MODEL_PATH, PipelineConfig
+from zimu.models import (
+    DEFAULT_MODEL_PATH,
+    DEFAULT_SENSEVOICE_MODEL_PATH,
+    DEFAULT_SENSEVOICE_VAD_PATH,
+    PipelineConfig,
+    TranscriptionBackend,
+)
 from zimu.pipeline import SubtitlePipeline
 
 logger = logging.getLogger(__name__)
@@ -17,7 +23,9 @@ logger = logging.getLogger(__name__)
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(
-        description="基于 faster-whisper + ffmpeg 为 MP4 视频生成硬字幕。",
+        description=(
+            "基于 faster-whisper / SenseVoice + ffmpeg，为 MP4 视频生成硬字幕。"
+        ),
     )
     parser.add_argument(
         "input",
@@ -31,12 +39,43 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="输出目录（默认与输入文件同目录）",
     )
+
+    # --- 转写后端与模型路径 ---
+    parser.add_argument(
+        "--backend",
+        choices=("whisper", "sensevoice"),
+        default="whisper",
+        help="转写后端：whisper（默认）或 sensevoice",
+    )
     parser.add_argument(
         "--model-path",
         type=Path,
         default=DEFAULT_MODEL_PATH,
-        help=f"本地 Whisper 模型目录（默认: {DEFAULT_MODEL_PATH}）",
+        help=(
+            f"本地 Whisper 模型目录，仅 backend=whisper 时生效"
+            f"（默认: {DEFAULT_MODEL_PATH}）"
+        ),
     )
+    parser.add_argument(
+        "--sensevoice-model-path",
+        type=Path,
+        default=DEFAULT_SENSEVOICE_MODEL_PATH,
+        help=(
+            f"SenseVoice 本地模型目录，仅 backend=sensevoice 时生效"
+            f"（默认: {DEFAULT_SENSEVOICE_MODEL_PATH}）"
+        ),
+    )
+    parser.add_argument(
+        "--sensevoice-vad-path",
+        type=Path,
+        default=DEFAULT_SENSEVOICE_VAD_PATH,
+        help=(
+            f"FSMN-VAD 本地模型目录，SenseVoice 分段与时间戳必需"
+            f"（默认: {DEFAULT_SENSEVOICE_VAD_PATH}）"
+        ),
+    )
+
+    # --- 两种后端共用参数 ---
     parser.add_argument(
         "--language",
         default=None,
@@ -53,6 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="保留中间提取的 WAV 音频文件",
     )
+
+    # --- 字幕烧录样式 ---
     parser.add_argument(
         "--font",
         default="Microsoft YaHei",
@@ -61,8 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--font-size",
         type=int,
-        default=24,
-        help="烧录字幕字号（默认: 24）",
+        default=12,
+        help="烧录字幕字号（默认: 12）",
     )
     parser.add_argument(
         "-v",
@@ -87,15 +128,18 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     """将 CLI 参数转换为 PipelineConfig。"""
     input_video: Path = args.input.resolve()
     output_dir: Path = (
-        args.output_dir.resolve()
-        if args.output_dir is not None
-        else input_video.parent
+        args.output_dir.resolve() if args.output_dir is not None else input_video.parent
     )
     device: Literal["auto", "cuda", "cpu"] = args.device
+    backend: TranscriptionBackend = args.backend
+
     return PipelineConfig(
         input_video=input_video,
         output_dir=output_dir,
+        backend=backend,
         model_path=args.model_path.resolve(),
+        sensevoice_model_path=args.sensevoice_model_path.resolve(),
+        sensevoice_vad_path=args.sensevoice_vad_path.resolve(),
         language=args.language,
         device=device,
         keep_temp=args.keep_temp,
@@ -129,8 +173,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"SRT:   {result.srt_path}")
     print(f"视频:  {result.subtitled_video_path}")
     if result.detected_language:
-        prob = result.language_probability or 0.0
-        print(f"语言:  {result.detected_language} ({prob:.0%})")
+        if result.language_probability is not None:
+            prob = result.language_probability
+            print(f"语言:  {result.detected_language} ({prob:.0%})")
+        else:
+            print(f"语言:  {result.detected_language}")
     return 0
 
 
