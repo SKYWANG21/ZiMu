@@ -8,6 +8,7 @@ from pathlib import Path
 
 from zimu.ffmpeg import FFmpegService
 from zimu.models import PipelineConfig, PipelineResult
+from zimu.segment import split_subtitle_segments
 from zimu.srt import SrtWriter
 from zimu.transcribe import TranscriptionBackendProtocol, create_transcription_service
 
@@ -70,6 +71,11 @@ class SubtitlePipeline:
             segments, info = transcription.transcribe(
                 wav_path,
                 language=config.language,
+            )
+            segments = split_subtitle_segments(
+                segments,
+                max_chars=config.max_subtitle_chars,
+                max_duration_sec=config.max_subtitle_duration_sec,
             )
             SrtWriter.write(segments, config.srt_path)
             self._ffmpeg.burn_subtitles(

@@ -106,6 +106,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="烧录字幕字号（默认: 12）",
     )
     parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=14,
+        help="单条字幕最大字数（默认: 14）",
+    )
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=3.5,
+        help="单条字幕最大时长，单位秒（默认: 3.5）",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -145,6 +157,8 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
         keep_temp=args.keep_temp,
         subtitle_font=args.font,
         subtitle_font_size=args.font_size,
+        max_subtitle_chars=args.max_chars,
+        max_subtitle_duration_sec=args.max_duration,
     )
 
 

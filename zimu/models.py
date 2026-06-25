@@ -59,6 +59,9 @@ class PipelineConfig:
     # 烧录字幕时的样式（ASS force_style 语法）
     subtitle_font: str = "Microsoft YaHei"
     subtitle_font_size: int = 24
+    # 字幕断句：单条最大字数与时长（秒）
+    max_subtitle_chars: int = 14
+    max_subtitle_duration_sec: float = 3.5
 
     @property
     def stem(self) -> str:

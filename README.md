@@ -83,6 +83,8 @@ python main.py path\to\video.mp4 --backend sensevoice --language zh
 | `--device cuda` | 推理设备：`auto` / `cuda` / `cpu` |
 | `--font "Microsoft YaHei"` | 烧录字幕字体 |
 | `--font-size 12` | 字幕字号 |
+| `--max-chars 14` | 单条字幕最大字数（断句） |
+| `--max-duration 3.5` | 单条字幕最大时长（秒） |
 | `-v` | 调试日志 |
 
 ### 输出文件
@@ -100,6 +102,7 @@ zimu/
   ffmpeg.py      # ffmpeg 音频提取 / 字幕烧录
   transcribe.py  # Whisper / SenseVoice 转写
   srt.py         # SRT 生成
+  segment.py     # 字幕断句后处理
   pipeline.py    # 流水线编排
 main.py          # CLI 入口
 ```

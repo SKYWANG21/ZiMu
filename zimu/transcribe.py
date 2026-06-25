@@ -19,6 +19,7 @@ from zimu.models import (
     PipelineConfig,
     SubtitleSegment,
 )
+from zimu.segment import ends_sentence, split_text_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,6 @@ DeviceChoice = Literal["auto", "cuda", "cpu"]
 # SenseVoice 输出文本中的语言标签，如 <|zh|>、|<|en|>
 _SENSEVOICE_LANG_TAG = re.compile(r"<\|([a-z]{2,10})\|>")
 _SENSEVOICE_LANG_SPLIT = re.compile(r"<\|(zh|en|yue|ja|ko|nospeech)\|>")
-_SENTENCE_END_RE = re.compile(r"[。！？.!?…]+$")
-_MAX_SUBTITLE_CHARS = 36
-_MAX_SUBTITLE_DURATION_MS = 6000
 
 # Whisper ISO 代码 -> SenseVoice language 参数（FunASR 文档约定）
 _WHISPER_TO_SENSEVOICE_LANG: dict[str, str] = {
@@ -167,6 +165,7 @@ class WhisperTranscriptionService(BaseTranscriptionService):
             language=language,
             vad_filter=True,
             beam_size=5,
+            word_timestamps=True,
         )
         whisper_segments = list(segments_iter)
         subtitle_segments = self._to_subtitle_segments(whisper_segments)
@@ -223,14 +222,105 @@ class WhisperTranscriptionService(BaseTranscriptionService):
         whisper_segments: list[WhisperSegment],
     ) -> list[SubtitleSegment]:
         """将 faster-whisper Segment 转换为统一的 SubtitleSegment 领域模型。"""
+        result: list[SubtitleSegment] = []
+        index = 1
+        for segment in whisper_segments:
+            text = segment.text.strip()
+            if not text:
+                continue
+
+            words = getattr(segment, "words", None)
+            if words:
+                for piece in WhisperTranscriptionService._segments_from_words(
+                    words,
+                    fallback_text=text,
+                    segment_start=segment.start,
+                    segment_end=segment.end,
+                ):
+                    result.append(
+                        SubtitleSegment(
+                            index=index,
+                            start=piece.start,
+                            end=piece.end,
+                            text=piece.text,
+                        )
+                    )
+                    index += 1
+            else:
+                result.append(
+                    SubtitleSegment(
+                        index=index,
+                        start=segment.start,
+                        end=segment.end,
+                        text=text,
+                    )
+                )
+                index += 1
+        return result
+
+    @staticmethod
+    def _segments_from_words(
+        words,
+        *,
+        fallback_text: str,
+        segment_start: float,
+        segment_end: float,
+    ) -> list[SubtitleSegment]:
+        """按词级时间戳将 Whisper 分段拆成更细粒度的中间片段。"""
+        pieces: list[SubtitleSegment] = []
+        buf_words: list[str] = []
+        piece_start: float | None = None
+        piece_end: float | None = None
+
+        for word in words:
+            word_text = getattr(word, "word", "") or ""
+            word_text = word_text.strip()
+            word_start = float(getattr(word, "start", segment_start))
+            word_end = float(getattr(word, "end", word_start))
+
+            if piece_start is None:
+                piece_start = word_start
+            piece_end = word_end
+            if word_text:
+                buf_words.append(word_text)
+
+            buf_text = "".join(buf_words).strip()
+            if not buf_text:
+                continue
+
+            if ends_sentence(word_text):
+                pieces.append(
+                    SubtitleSegment(
+                        index=0,
+                        start=piece_start,
+                        end=piece_end,
+                        text=buf_text,
+                    )
+                )
+                buf_words = []
+                piece_start = None
+                piece_end = None
+
+        if buf_words and piece_start is not None and piece_end is not None:
+            pieces.append(
+                SubtitleSegment(
+                    index=0,
+                    start=piece_start,
+                    end=piece_end,
+                    text="".join(buf_words).strip(),
+                )
+            )
+
+        if pieces:
+            return pieces
+
         return [
             SubtitleSegment(
-                index=index,
-                start=segment.start,
-                end=segment.end,
-                text=segment.text.strip(),
+                index=0,
+                start=segment_start,
+                end=segment_end,
+                text=fallback_text,
             )
-            for index, segment in enumerate(whisper_segments, start=1)
         ]
 
 
@@ -499,13 +589,7 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
             if not buf_text:
                 continue
 
-            duration = end_ms - seg_start
-            ends_sentence = bool(_SENTENCE_END_RE.search(word))
-            too_long = (
-                len(buf_text) >= _MAX_SUBTITLE_CHARS
-                or duration >= _MAX_SUBTITLE_DURATION_MS
-            )
-            if ends_sentence or too_long:
+            if ends_sentence(word):
                 segments.append(
                     {
                         "start": seg_start,
@@ -516,6 +600,7 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
                 buf_words = []
                 seg_start = None
                 seg_end = None
+                continue
 
         if buf_words and seg_start is not None and seg_end is not None:
             segments.append(
@@ -538,6 +623,7 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
         total_duration_ms: int,
         *,
         postprocess,
+        max_chars: int = 14,
     ) -> list[dict]:
         """按 SenseVoice 语言标签切分，并按字符数比例分配时间。"""
         parts = _SENSEVOICE_LANG_SPLIT.split(text)
@@ -551,14 +637,26 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
         if not chunks:
             chunks = [text]
 
-        clean_lengths = [len(postprocess(chunk).strip()) for chunk in chunks]
+        expanded_chunks: list[str] = []
+        for chunk in chunks:
+            clean = postprocess(chunk).strip()
+            if not clean:
+                continue
+            if len(clean) <= max_chars:
+                expanded_chunks.append(chunk)
+            else:
+                sub_texts = split_text_chunks(clean, max_chars)
+                for sub in sub_texts:
+                    expanded_chunks.append(sub)
+
+        clean_lengths = [len(postprocess(chunk).strip()) for chunk in expanded_chunks]
         total_chars = sum(clean_lengths) or 1
         if total_duration_ms <= 0:
             total_duration_ms = max(total_chars * 200, 1000)
 
         segments: list[dict] = []
         cursor = 0
-        for chunk, clean_len in zip(chunks, clean_lengths):
+        for chunk, clean_len in zip(expanded_chunks, clean_lengths):
             if clean_len <= 0:
                 continue
             seg_ms = max(int(total_duration_ms * clean_len / total_chars), 500)
