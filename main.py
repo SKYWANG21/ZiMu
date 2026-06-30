@@ -10,6 +10,7 @@ from typing import Literal, Optional
 
 from zimu.models import (
     DEFAULT_MODEL_PATH,
+    DEFAULT_REMOTE_API_URL,
     DEFAULT_SENSEVOICE_MODEL_PATH,
     DEFAULT_SENSEVOICE_VAD_PATH,
     PipelineConfig,
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(
         description=(
-            "基于 faster-whisper / SenseVoice + ffmpeg，为 MP4 视频生成硬字幕。"
+            "基于 faster-whisper / SenseVoice / 远程 API + ffmpeg，为 MP4 视频生成硬字幕。"
         ),
     )
     parser.add_argument(
@@ -43,9 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     # --- 转写后端与模型路径 ---
     parser.add_argument(
         "--backend",
-        choices=("whisper", "sensevoice"),
+        choices=("whisper", "sensevoice", "remote"),
         default="whisper",
-        help="转写后端：whisper（默认）或 sensevoice",
+        help="转写后端：whisper（默认）、sensevoice 或 remote",
     )
     parser.add_argument(
         "--model-path",
@@ -72,6 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             f"FSMN-VAD 本地模型目录，SenseVoice 分段与时间戳必需"
             f"（默认: {DEFAULT_SENSEVOICE_VAD_PATH}）"
+        ),
+    )
+    parser.add_argument(
+        "--remote-api-url",
+        default=DEFAULT_REMOTE_API_URL,
+        help=(
+            f"远程转写 API 地址，仅 backend=remote 时生效"
+            f"（默认: {DEFAULT_REMOTE_API_URL}）"
         ),
     )
 
@@ -152,6 +161,7 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
         model_path=args.model_path.resolve(),
         sensevoice_model_path=args.sensevoice_model_path.resolve(),
         sensevoice_vad_path=args.sensevoice_vad_path.resolve(),
+        remote_api_url=args.remote_api_url,
         language=args.language,
         device=device,
         keep_temp=args.keep_temp,

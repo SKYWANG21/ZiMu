@@ -19,8 +19,11 @@ DEFAULT_SENSEVOICE_MODEL_PATH = Path(r"D:\models\SenseVoiceSmall")
 # FSMN-VAD 模型（SenseVoice 分段与时间戳必需，需用户手动下载）
 DEFAULT_SENSEVOICE_VAD_PATH = Path(r"D:\models\speech_fsmn_vad_zh-cn-16k")
 
-# 转写后端类型：whisper 为默认，sensevoice 为可选
-TranscriptionBackend = Literal["whisper", "sensevoice"]
+# 远程转写 API（OpenAI /v1/audio/transcriptions 兼容接口）
+DEFAULT_REMOTE_API_URL = "http://120.27.112.103:8000/v1/audio/transcriptions"
+
+# 转写后端类型：whisper 为默认，sensevoice / remote 为可选
+TranscriptionBackend = Literal["whisper", "sensevoice", "remote"]
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ class PipelineConfig:
     通过 ``backend`` 选择转写引擎：
     - ``whisper``：使用 ``model_path`` 指定的 faster-whisper 本地模型
     - ``sensevoice``：使用 ``sensevoice_model_path`` 与 ``sensevoice_vad_path``
+    - ``remote``：调用 ``remote_api_url`` 指定的远程转写 HTTP 接口
     """
 
     input_video: Path
@@ -52,6 +56,8 @@ class PipelineConfig:
     # SenseVoice 后端专用：主模型与 VAD 本地目录
     sensevoice_model_path: Path = DEFAULT_SENSEVOICE_MODEL_PATH
     sensevoice_vad_path: Path = DEFAULT_SENSEVOICE_VAD_PATH
+    # Remote 后端专用：multipart/form-data POST 转写接口地址
+    remote_api_url: str = DEFAULT_REMOTE_API_URL
     # 两种后端共用：None 表示自动检测 / auto
     language: Optional[str] = None
     device: Literal["auto", "cuda", "cpu"] = "auto"

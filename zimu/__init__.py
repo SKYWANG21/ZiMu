@@ -1,7 +1,8 @@
-"""ZiMu — 基于 faster-whisper / SenseVoice 与 ffmpeg 的视频字幕生成工具包。"""
+"""ZiMu — 基于 faster-whisper / SenseVoice / 远程 API 与 ffmpeg 的视频字幕生成工具包。"""
 
 from zimu.models import (
     DEFAULT_MODEL_PATH,
+    DEFAULT_REMOTE_API_URL,
     DEFAULT_SENSEVOICE_MODEL_PATH,
     DEFAULT_SENSEVOICE_VAD_PATH,
     PipelineConfig,
@@ -11,6 +12,7 @@ from zimu.models import (
 )
 from zimu.pipeline import SubtitlePipeline
 from zimu.transcribe import (
+    RemoteTranscriptionService,
     SenseVoiceTranscriptionService,
     TranscriptionService,
     WhisperTranscriptionService,
@@ -19,10 +21,12 @@ from zimu.transcribe import (
 
 __all__ = [
     "DEFAULT_MODEL_PATH",
+    "DEFAULT_REMOTE_API_URL",
     "DEFAULT_SENSEVOICE_MODEL_PATH",
     "DEFAULT_SENSEVOICE_VAD_PATH",
     "PipelineConfig",
     "PipelineResult",
+    "RemoteTranscriptionService",
     "SenseVoiceTranscriptionService",
     "SubtitlePipeline",
     "SubtitleSegment",

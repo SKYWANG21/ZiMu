@@ -1,19 +1,26 @@
-"""语音转写封装：支持 faster-whisper 与 SenseVoice（FunASR）两种后端。"""
+"""语音转写封装：支持 faster-whisper、SenseVoice（FunASR）与远程 HTTP API。"""
 
 from __future__ import annotations
 
+import json
 import logging
+import mimetypes
 import re
+import uuid
+import wave
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional, Protocol, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, runtime_checkable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment as WhisperSegment
 
 from zimu.models import (
     DEFAULT_MODEL_PATH,
+    DEFAULT_REMOTE_API_URL,
     DEFAULT_SENSEVOICE_MODEL_PATH,
     DEFAULT_SENSEVOICE_VAD_PATH,
     PipelineConfig,
@@ -733,6 +740,250 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
         return 0.0
 
 
+class RemoteTranscriptionService:
+    """
+    远程 HTTP 转写后端。
+
+    向 OpenAI 兼容的 ``/v1/audio/transcriptions`` 接口发送
+    ``multipart/form-data`` 请求，字段为 ``file``（音频）与可选 ``language``。
+    额外附带 ``response_format=verbose_json`` 以获取带时间戳的分段结果。
+    """
+
+    def __init__(
+        self,
+        api_url: str = DEFAULT_REMOTE_API_URL,
+        *,
+        timeout_sec: float = 600.0,
+    ) -> None:
+        self._api_url = api_url
+        self._timeout_sec = timeout_sec
+
+    def transcribe(
+        self,
+        audio_path: Path,
+        *,
+        language: Optional[str] = None,
+    ) -> tuple[list[SubtitleSegment], TranscriptionInfo]:
+        """
+        调用远程转写 API。
+
+        Args:
+            audio_path: 音频文件路径（通常为 16 kHz WAV）。
+            language: 可选语言代码，如 zh、en。
+        """
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+
+        logger.info("[Remote] 开始转写: %s -> %s", audio_path.name, self._api_url)
+        form_fields: dict[str, str] = {}
+        if language:
+            form_fields["language"] = language
+
+        raw_body = self._post_transcription(audio_path, form_fields)
+        payload = self._parse_response_body(raw_body)
+        segments = self._to_subtitle_segments(payload, audio_path=audio_path)
+        duration = self._resolve_duration(payload, audio_path, segments)
+        detected_language = payload.get("language") if isinstance(payload, dict) else None
+        if detected_language is None and language:
+            detected_language = language
+
+        info = TranscriptionInfo(
+            language=detected_language,
+            language_probability=None,
+            duration=duration,
+        )
+        logger.info(
+            "[Remote] 转写完成: %d 条字幕, language=%s, duration=%.1fs",
+            len(segments),
+            info.language,
+            info.duration,
+        )
+        return segments, info
+
+    def _post_transcription(
+        self,
+        audio_path: Path,
+        form_fields: dict[str, str],
+    ) -> bytes:
+        """
+        请求远程转写接口。
+
+        优先附带 ``response_format=verbose_json`` 以获取分段时间戳；
+        若服务端不支持则回退为仅 ``file`` / ``language`` 字段。
+        """
+        fields_with_verbose = {**form_fields, "response_format": "verbose_json"}
+        try:
+            return self._post_multipart(
+                self._api_url,
+                file_field="file",
+                file_path=audio_path,
+                fields=fields_with_verbose,
+            )
+        except RuntimeError as exc:
+            if "verbose_json" not in str(exc):
+                raise
+            logger.warning(
+                "[Remote] 服务端不支持 verbose_json，回退为纯文本响应"
+            )
+            return self._post_multipart(
+                self._api_url,
+                file_field="file",
+                file_path=audio_path,
+                fields=form_fields,
+            )
+
+    def _post_multipart(
+        self,
+        url: str,
+        *,
+        file_field: str,
+        file_path: Path,
+        fields: dict[str, str],
+    ) -> bytes:
+        """以 multipart/form-data 向远程接口 POST 音频与表单字段。"""
+        boundary = uuid.uuid4().hex
+        body_parts: list[bytes] = []
+
+        for name, value in fields.items():
+            body_parts.append(
+                (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                    f"{value}\r\n"
+                ).encode()
+            )
+
+        file_data = file_path.read_bytes()
+        filename = file_path.name
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        body_parts.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{file_field}"; '
+                f'filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode()
+            + file_data
+            + b"\r\n"
+        )
+        body_parts.append(f"--{boundary}--\r\n".encode())
+        body = b"".join(body_parts)
+
+        request = Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        try:
+            with urlopen(request, timeout=self._timeout_sec) as response:
+                return response.read()
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"远程转写 API 返回 HTTP {exc.code}: {detail}"
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"远程转写 API 请求失败: {exc.reason}") from exc
+
+    @staticmethod
+    def _parse_response_body(raw_body: bytes) -> dict[str, Any] | str:
+        """解析 API 响应：优先 JSON，否则按纯文本处理。"""
+        text = raw_body.decode("utf-8", errors="replace").strip()
+        if not text:
+            raise ValueError("远程转写 API 返回空响应")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(parsed, dict):
+            return parsed
+        return text
+
+    def _to_subtitle_segments(
+        self,
+        payload: dict[str, Any] | str,
+        *,
+        audio_path: Path,
+    ) -> list[SubtitleSegment]:
+        """将 API 响应转为 SubtitleSegment 列表。"""
+        if isinstance(payload, dict):
+            raw_segments = payload.get("segments")
+            if isinstance(raw_segments, list) and raw_segments:
+                segments: list[SubtitleSegment] = []
+                index = 1
+                for item in raw_segments:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("text", "")).strip()
+                    if not text:
+                        continue
+                    segments.append(
+                        SubtitleSegment(
+                            index=index,
+                            start=float(item.get("start", 0.0)),
+                            end=float(item.get("end", 0.0)),
+                            text=text,
+                        )
+                    )
+                    index += 1
+                if segments:
+                    return segments
+
+            full_text = str(payload.get("text", "")).strip()
+            if full_text:
+                duration = self._read_wav_duration(audio_path)
+                return [
+                    SubtitleSegment(
+                        index=1,
+                        start=0.0,
+                        end=duration,
+                        text=full_text,
+                    )
+                ]
+
+        if isinstance(payload, str) and payload.strip():
+            duration = self._read_wav_duration(audio_path)
+            return [
+                SubtitleSegment(
+                    index=1,
+                    start=0.0,
+                    end=duration,
+                    text=payload.strip(),
+                )
+            ]
+
+        raise ValueError("远程转写 API 未返回可用文本或分段结果")
+
+    @staticmethod
+    def _resolve_duration(
+        payload: dict[str, Any] | str,
+        audio_path: Path,
+        segments: list[SubtitleSegment],
+    ) -> float:
+        """从响应、字幕片段或音频文件推断总时长（秒）。"""
+        if isinstance(payload, dict):
+            duration = payload.get("duration")
+            if isinstance(duration, (int, float)) and duration > 0:
+                return float(duration)
+        if segments:
+            return segments[-1].end
+        return RemoteTranscriptionService._read_wav_duration(audio_path)
+
+    @staticmethod
+    def _read_wav_duration(audio_path: Path) -> float:
+        """读取 WAV 文件时长；非 WAV 或解析失败时返回 0。"""
+        try:
+            with wave.open(str(audio_path), "rb") as wav_file:
+                frame_count = wav_file.getnframes()
+                sample_rate = wav_file.getframerate()
+                if sample_rate > 0:
+                    return frame_count / float(sample_rate)
+        except wave.Error:
+            pass
+        return 0.0
+
+
 # 向后兼容：旧代码中的 TranscriptionService 即 Whisper 实现
 TranscriptionService = WhisperTranscriptionService
 
@@ -755,6 +1006,8 @@ def create_transcription_service(
             vad_path=config.sensevoice_vad_path,
             device=config.device,
         )
+    if config.backend == "remote":
+        return RemoteTranscriptionService(api_url=config.remote_api_url)
     return WhisperTranscriptionService(
         model_path=config.model_path,
         device=config.device,
