@@ -1,4 +1,6 @@
-faster-whisper>=1.2.0
 torch>=2.0
 torchaudio
 funasr>=1.1.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart
