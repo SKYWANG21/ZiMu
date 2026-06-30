@@ -1,4 +1,4 @@
-"""ZiMu CLI — 视频字幕生成 Demo 入口。"""
+"""ZiMu CLI — 音频语音转写 Demo 入口。"""
 
 from __future__ import annotations
 
@@ -6,116 +6,37 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
-from zimu.models import (
-    DEFAULT_MODEL_PATH,
-    DEFAULT_SENSEVOICE_MODEL_PATH,
-    DEFAULT_SENSEVOICE_VAD_PATH,
-    PipelineConfig,
-    TranscriptionBackend,
-)
+from zimu.logging_setup import error_log_session
+from zimu.models import SUPPORTED_AUDIO_EXTENSIONS
 from zimu.pipeline import SubtitlePipeline
+from zimu.settings import DEFAULT_CONFIG_PATH, load_settings, to_pipeline_config
 
 logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数解析器。"""
+    supported = ", ".join(sorted(SUPPORTED_AUDIO_EXTENSIONS))
     parser = argparse.ArgumentParser(
-        description=(
-            "基于 faster-whisper / SenseVoice + ffmpeg，为 MP4 视频生成硬字幕。"
-        ),
+        description="基于 SenseVoice 的音频语音转写，输出转写文本。",
     )
     parser.add_argument(
         "input",
         type=Path,
-        help="输入 .mp4 视频路径",
+        help=f"输入音频路径（支持: {supported}）",
     )
     parser.add_argument(
-        "-o",
-        "--output-dir",
+        "--config",
         type=Path,
-        default=None,
-        help="输出目录（默认与输入文件同目录）",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"配置文件路径（默认: {DEFAULT_CONFIG_PATH}）",
     )
-
-    # --- 转写后端与模型路径 ---
-    parser.add_argument(
-        "--backend",
-        choices=("whisper", "sensevoice"),
-        default="whisper",
-        help="转写后端：whisper（默认）或 sensevoice",
-    )
-    parser.add_argument(
-        "--model-path",
-        type=Path,
-        default=DEFAULT_MODEL_PATH,
-        help=(
-            f"本地 Whisper 模型目录，仅 backend=whisper 时生效"
-            f"（默认: {DEFAULT_MODEL_PATH}）"
-        ),
-    )
-    parser.add_argument(
-        "--sensevoice-model-path",
-        type=Path,
-        default=DEFAULT_SENSEVOICE_MODEL_PATH,
-        help=(
-            f"SenseVoice 本地模型目录，仅 backend=sensevoice 时生效"
-            f"（默认: {DEFAULT_SENSEVOICE_MODEL_PATH}）"
-        ),
-    )
-    parser.add_argument(
-        "--sensevoice-vad-path",
-        type=Path,
-        default=DEFAULT_SENSEVOICE_VAD_PATH,
-        help=(
-            f"FSMN-VAD 本地模型目录，SenseVoice 分段与时间戳必需"
-            f"（默认: {DEFAULT_SENSEVOICE_VAD_PATH}）"
-        ),
-    )
-
-    # --- 两种后端共用参数 ---
     parser.add_argument(
         "--language",
         default=None,
         help="指定语言代码，如 zh、en（默认自动检测）",
-    )
-    parser.add_argument(
-        "--device",
-        choices=("auto", "cuda", "cpu"),
-        default="auto",
-        help="推理设备（默认: auto）",
-    )
-    parser.add_argument(
-        "--keep-temp",
-        action="store_true",
-        help="保留中间提取的 WAV 音频文件",
-    )
-
-    # --- 字幕烧录样式 ---
-    parser.add_argument(
-        "--font",
-        default="Microsoft YaHei",
-        help="烧录字幕字体（默认: Microsoft YaHei）",
-    )
-    parser.add_argument(
-        "--font-size",
-        type=int,
-        default=12,
-        help="烧录字幕字号（默认: 12）",
-    )
-    parser.add_argument(
-        "--max-chars",
-        type=int,
-        default=14,
-        help="单条字幕最大字数（默认: 14）",
-    )
-    parser.add_argument(
-        "--max-duration",
-        type=float,
-        default=3.5,
-        help="单条字幕最大时长，单位秒（默认: 3.5）",
     )
     parser.add_argument(
         "-v",
@@ -136,32 +57,6 @@ def configure_logging(verbose: bool) -> None:
     )
 
 
-def build_config(args: argparse.Namespace) -> PipelineConfig:
-    """将 CLI 参数转换为 PipelineConfig。"""
-    input_video: Path = args.input.resolve()
-    output_dir: Path = (
-        args.output_dir.resolve() if args.output_dir is not None else input_video.parent
-    )
-    device: Literal["auto", "cuda", "cpu"] = args.device
-    backend: TranscriptionBackend = args.backend
-
-    return PipelineConfig(
-        input_video=input_video,
-        output_dir=output_dir,
-        backend=backend,
-        model_path=args.model_path.resolve(),
-        sensevoice_model_path=args.sensevoice_model_path.resolve(),
-        sensevoice_vad_path=args.sensevoice_vad_path.resolve(),
-        language=args.language,
-        device=device,
-        keep_temp=args.keep_temp,
-        subtitle_font=args.font,
-        subtitle_font_size=args.font_size,
-        max_subtitle_chars=args.max_chars,
-        max_subtitle_duration_sec=args.max_duration,
-    )
-
-
 def main(argv: Optional[list[str]] = None) -> int:
     """
     CLI 主函数。
@@ -174,9 +69,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     configure_logging(args.verbose)
 
     try:
-        config = build_config(args)
-        pipeline = SubtitlePipeline()
-        result = pipeline.run(config)
+        with error_log_session():
+            settings = load_settings(args.config)
+            config = to_pipeline_config(
+                settings,
+                input_audio=args.input,
+                language=args.language,
+            )
+            pipeline = SubtitlePipeline()
+            result = pipeline.run(config)
     except (FileNotFoundError, ValueError) as exc:
         logger.error("%s", exc)
         return 1
@@ -184,14 +85,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         logger.exception("处理失败: %s", exc)
         return 1
 
-    print(f"SRT:   {result.srt_path}")
-    print(f"视频:  {result.subtitled_video_path}")
+    print(result.transcription_text)
     if result.detected_language:
         if result.language_probability is not None:
             prob = result.language_probability
-            print(f"语言:  {result.detected_language} ({prob:.0%})")
+            logger.info("语言: %s (%.0f%%)", result.detected_language, prob * 100)
         else:
-            print(f"语言:  {result.detected_language}")
+            logger.info("语言: %s", result.detected_language)
     return 0
 
 
