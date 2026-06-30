@@ -72,8 +72,7 @@ class BaseTranscriptionService(ABC):
         audio_path: Path,
         *,
         language: Optional[str] = None,
-    ) -> tuple[list[SubtitleSegment], TranscriptionInfo]:
-        ...
+    ) -> tuple[list[SubtitleSegment], TranscriptionInfo]: ...
 
     @staticmethod
     def _ensure_local_model_dir(
@@ -566,7 +565,9 @@ class SenseVoiceTranscriptionService(BaseTranscriptionService):
         words: list | None,
     ) -> list[dict]:
         """将 ``output_timestamp=True`` 合并后的词级时间戳切成字幕句。"""
-        token_texts = words if words and len(words) == len(timestamps) else [""] * len(timestamps)
+        token_texts = (
+            words if words and len(words) == len(timestamps) else [""] * len(timestamps)
+        )
         segments: list[dict] = []
         buf_words: list[str] = []
         seg_start: int | None = None
