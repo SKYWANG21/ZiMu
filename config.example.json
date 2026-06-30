@@ -1,0 +1,11 @@
+{
+  "device": "cpu",
+  "max_subtitle_chars": 14,
+  "max_subtitle_duration_sec": 3.5,
+  "sensevoice_model_path": "D:/models/SenseVoiceSmall",
+  "sensevoice_vad_path": "D:/models/speech_fsmn_vad_zh-cn-16k",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  }
+}
