@@ -6,11 +6,11 @@ import logging
 import tempfile
 from pathlib import Path
 
-from zimu.ffmpeg import FFmpegService
-from zimu.models import PipelineConfig, PipelineResult
-from zimu.segment import split_subtitle_segments
-from zimu.srt import SrtWriter
-from zimu.transcribe import TranscriptionBackendProtocol, create_transcription_service
+from src.ffmpeg import FFmpegService
+from src.models import PipelineConfig, PipelineResult
+from src.segment import split_subtitle_segments
+from src.srt import SrtWriter
+from src.transcribe import TranscriptionBackendProtocol, create_transcription_service
 
 logger = logging.getLogger(__name__)
 

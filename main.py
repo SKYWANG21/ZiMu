@@ -1,4 +1,4 @@
-"""ZiMu CLI — 视频字幕生成 Demo 入口。"""
+"""src CLI — 视频字幕生成 Demo 入口。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Literal, Optional
 
-from zimu.models import (
+from src.models import (
     DEFAULT_MODEL_PATH,
     DEFAULT_REMOTE_API_URL,
     DEFAULT_SENSEVOICE_MODEL_PATH,
@@ -16,7 +16,7 @@ from zimu.models import (
     PipelineConfig,
     TranscriptionBackend,
 )
-from zimu.pipeline import SubtitlePipeline
+from src.pipeline import SubtitlePipeline
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from faster_whisper.utils import format_timestamp
 
-from zimu.models import SubtitleSegment
+from src.models import SubtitleSegment
 
 
 class SrtWriter:

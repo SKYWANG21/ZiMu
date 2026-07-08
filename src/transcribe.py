@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment as WhisperSegment
 
-from zimu.models import (
+from src.models import (
     DEFAULT_MODEL_PATH,
     DEFAULT_REMOTE_API_URL,
     DEFAULT_SENSEVOICE_MODEL_PATH,
@@ -26,7 +26,7 @@ from zimu.models import (
     PipelineConfig,
     SubtitleSegment,
 )
-from zimu.segment import ends_sentence, split_text_chunks
+from src.segment import ends_sentence, split_text_chunks
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from zimu.models import SubtitleSegment
+from src.models import SubtitleSegment
 
 _STRONG_BREAK_RE = re.compile(r"[。！？.!?…]")
 _WEAK_BREAK_RE = re.compile(r"[，、；,:]")
